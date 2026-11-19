@@ -3,80 +3,314 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="上傳鞋底照片，自動偵測磨損熱點、推估步態類型，並支援語音操作與朗讀分析報告。">
   <title>AI 步態分析 & 鞋底磨損檢測</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* 三欄比例：改這三個值即可調整（數值越大，欄位越寬） */
+    :root {
+      --col-setup: 3fr;
+      --col-voice: 3fr;
+      --col-result: 6fr;
+    }
+    .dash-grid {
+      display: grid;
+      gap: 1.5rem;
+      grid-template-columns: var(--col-setup) var(--col-voice) var(--col-result);
+      align-items: start;
+    }
+    .photo-slot {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      height: 6.5rem;
+      border: 2px dashed #475569;
+      border-radius: 0.75rem;
+      background: rgba(15, 23, 42, 0.5);
+      cursor: pointer;
+      overflow: hidden;
+      transition: border-color .2s, background .2s;
+    }
+    .photo-slot:hover { border-color: #38bdf8; background: rgba(14, 165, 233, 0.08); }
+    .photo-preview {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    @media (max-width: 1023px) {
+      .dash-grid { grid-template-columns: 5fr 7fr; }
+      .card-result { grid-column: 1 / -1; }
+    }
+    @media (max-width: 767px) {
+      .dash-grid { grid-template-columns: 1fr; }
+      .card-result { grid-column: auto; }
+    }
+  </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
-  <div class="max-w-5xl mx-auto">
+  <div class="max-w-7xl mx-auto">
     <!-- 標題區 -->
     <header class="text-center mb-8">
       <h1 class="text-3xl md:text-4xl font-bold text-sky-400 mb-2">👟 AI 步態分析 & 鞋底磨損檢測</h1>
-      <p class="text-slate-400">上傳舊鞋底照片，透過磨耗力學標記熱點並評估足部與關節受力狀況</p>
+      <p class="text-slate-400">上傳舊鞋底照片，自動偵測磨耗熱點、推估步態，並可透過語音操作與聆聽建議</p>
+      <a href="https://huggingface.co/spaces/Suntoryan311/foothealth" target="_blank" rel="noopener noreferrer"
+         class="inline-flex items-center gap-2 mt-4 px-5 py-2.5 rounded-full border border-sky-500/60 bg-sky-500/10 text-sky-300 text-sm font-medium hover:bg-sky-500/20 hover:text-sky-200 transition">
+        🤗 在 HuggingFace 上開啟示範 Space
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M14 5h5v5M19 5l-7 7M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4" />
+        </svg>
+      </a>
+      <p class="text-xs text-slate-500 mt-2">註：HuggingFace Space 為互動示範，其熱點為模擬標註；本頁的熱點由本機影像紋理分析產生。</p>
     </header>
 
-    <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
-      <!-- 左側控制面板 -->
-      <div class="md:col-span-5 bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg flex flex-col justify-between">
-        <div class="space-y-5">
-          <div>
-            <label class="block text-sm font-medium text-sky-300 mb-2">1. 上傳鞋底照片</label>
-            <input type="file" id="imageInput" accept="image/*" class="block w-full text-sm text-slate-300 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-sky-500 file:text-white hover:file:bg-sky-600 cursor-pointer bg-slate-900 rounded-lg border border-slate-600"/>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-sky-300 mb-2">2. 觀察並選擇主要磨損位置</label>
-            <select id="gaitSelect" class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-slate-100 focus:outline-none focus:border-sky-400">
-              <option value="neutral">正常/中性步態（後跟外側＋前掌大拇趾微磨）</option>
-              <option value="medial">內側磨損（疑似扁平足 / 內八步態）</option>
-              <option value="lateral">外側磨損（疑似高足弓 / 外八步態）</option>
-              <option value="forefoot">前掌過度磨損（頻繁跑跳 / 阿基里斯腱緊繃）</option>
-              <option value="asymmetric">左右不對稱磨損（重心傾斜 / 骨盆歪斜）</option>
-            </select>
-          </div>
+    <div class="dash-grid">
+      <!-- 卡片 1：照片與分析設定 -->
+      <section class="card-setup bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg space-y-5">
+        <div class="flex items-center gap-3 border-b border-slate-700 pb-4">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-sky-500/20 text-sky-300 text-sm font-bold">1</span>
+          <h2 class="text-sm font-semibold text-slate-200">照片與分析設定</h2>
         </div>
 
-        <button onclick="analyzeWear()" class="mt-6 w-full bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold py-3 px-4 rounded-xl shadow-md transition">
+        <div>
+          <label class="block text-sm font-medium text-sky-300 mb-2">上傳多角度照片</label>
+          <div class="grid grid-cols-3 gap-2.5">
+            <label class="photo-slot">
+              <input type="file" id="frontInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"/>
+              <span class="text-xl leading-none">📷</span>
+              <span class="text-[11px] text-slate-400">正面</span>
+              <img id="frontPreview" class="photo-preview" alt="正面照片預覽"/>
+            </label>
+            <label class="photo-slot">
+              <input type="file" id="sideInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"/>
+              <span class="text-xl leading-none">📷</span>
+              <span class="text-[11px] text-slate-400">側面</span>
+              <img id="sidePreview" class="photo-preview" alt="側面照片預覽"/>
+            </label>
+            <label class="photo-slot border-sky-500/60">
+              <input type="file" id="imageInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"/>
+              <span class="text-xl leading-none">📷</span>
+              <span class="text-[11px] text-sky-300 font-medium">底面 (主圖)</span>
+              <img id="bottomPreview" class="photo-preview" alt="底面照片預覽"/>
+            </label>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-2 leading-relaxed">底面照片會用於熱點自動偵測；正面／側面做為多角度參考。</p>
+        </div>
+
+        <div class="flex items-start gap-3 bg-slate-900/60 p-3 rounded-lg border border-slate-700">
+          <input type="checkbox" id="autoDetect" checked class="mt-0.5 w-4 h-4 accent-sky-500 cursor-pointer"/>
+          <label for="autoDetect" class="text-sm text-slate-300 cursor-pointer">
+            <span class="font-medium text-sky-300">自動偵測熱點</span>
+            <span class="block text-xs text-slate-500 mt-0.5">分析照片紋理找出平滑磨耗區，並推估步態類型</span>
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-sky-300 mb-2">確認／選擇主要磨損位置</label>
+          <select id="gaitSelect" class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-slate-100 focus:outline-none focus:border-sky-400">
+            <option value="neutral">正常/中性步態（後跟外側＋前掌大拇趾微磨）</option>
+            <option value="medial">內側磨損（疑似扁平足 / 內八步態）</option>
+            <option value="lateral">外側磨損（疑似高足弓 / 外八步態）</option>
+            <option value="forefoot">前掌過度磨損（頻繁跑跳 / 阿基里斯腱緊繃）</option>
+            <option value="asymmetric">左右不對稱磨損（重心傾斜 / 骨盆歪斜）</option>
+          </select>
+          <p id="inferHint" class="text-xs text-slate-500 mt-2">上傳照片後會自動填入推估結果，仍可手動更改。</p>
+        </div>
+      </section>
+
+      <!-- 卡片 2：語音助理與執行 -->
+      <section class="card-voice bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg flex flex-col gap-5">
+        <div class="flex items-center gap-3 border-b border-slate-700 pb-4">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-300 text-sm font-bold">2</span>
+          <h2 class="text-sm font-semibold text-slate-200">語音助理</h2>
+        </div>
+
+        <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-700 space-y-3 flex-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-slate-400">🎙️ 語音操作</span>
+            <span id="voiceBadge" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 whitespace-nowrap">尚未啟動</span>
+          </div>
+          <p class="text-xs text-slate-500 leading-relaxed">可說「內側磨損」、「開始分析」、「朗讀結果」等指令。</p>
+          <div class="flex gap-2">
+            <button id="micBtn" onclick="toggleListen()" class="flex-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold py-2.5 px-3 rounded-lg transition">
+              🎤 點擊說話
+            </button>
+            <button onclick="speakReport()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2.5 px-3 rounded-lg transition" title="朗讀分析結果">🔊</button>
+            <button onclick="stopSpeaking()" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold py-2.5 px-3 rounded-lg transition" title="停止朗讀">⏹</button>
+          </div>
+          <p id="voiceStatus" class="text-xs text-slate-400 min-h-[1rem]">準備就緒。</p>
+          <p id="voiceTranscript" class="text-xs text-amber-300/90 min-h-[1rem] break-words"></p>
+        </div>
+
+        <button onclick="analyzeWear()" class="mt-auto w-full bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold py-3 px-4 rounded-xl shadow-md transition">
           開始步態與熱點分析
         </button>
-      </div>
+      </section>
 
-      <!-- 右側結果顯示區 -->
-      <div class="md:col-span-7 bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg space-y-6">
+      <!-- 卡片 3：分析結果 -->
+      <section class="card-result bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg space-y-6">
+        <div class="flex items-center gap-3 border-b border-slate-700 pb-4">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-500/20 text-amber-300 text-sm font-bold">3</span>
+          <h2 class="text-sm font-semibold text-slate-200">分析結果</h2>
+        </div>
+
+        <div id="photoGallery" class="grid grid-cols-3 gap-3 hidden">
+          <figure class="space-y-1">
+            <img id="galleryFront" class="w-full h-24 object-cover rounded-lg border border-slate-700 bg-slate-900" alt="正面照片"/>
+            <figcaption class="text-center text-[11px] text-slate-500">正面</figcaption>
+          </figure>
+          <figure class="space-y-1">
+            <img id="gallerySide" class="w-full h-24 object-cover rounded-lg border border-slate-700 bg-slate-900" alt="側面照片"/>
+            <figcaption class="text-center text-[11px] text-slate-500">側面</figcaption>
+          </figure>
+          <figure class="space-y-1">
+            <img id="galleryBottom" class="w-full h-24 object-cover rounded-lg border border-sky-600 bg-slate-900" alt="底面照片"/>
+            <figcaption class="text-center text-[11px] text-sky-400">底面 (分析圖)</figcaption>
+          </figure>
+        </div>
+
+        <div id="angleBox" class="bg-slate-900/60 p-4 rounded-xl border border-slate-700 space-y-2 hidden">
+          <h4 class="text-sm font-semibold text-sky-300">多角度影像推估</h4>
+          <p id="angleFront" class="text-xs text-slate-300">正面：—</p>
+          <p id="angleSide" class="text-xs text-slate-300">側面：—</p>
+          <p id="angleConclusion" class="text-xs text-amber-300 pt-2 border-t border-slate-700">綜合：—</p>
+          <p class="text-[10px] text-slate-500 leading-relaxed">以上為影像輪廓特徵推估，準確度有限，僅供參考，不作為醫療診斷依據。</p>
+        </div>
+
         <div>
-          <h2 class="text-sm font-medium text-sky-300 mb-2">磨損熱點視覺化預覽 (Heatmap)</h2>
+          <h3 class="text-sm font-medium text-sky-300 mb-2">磨損熱點視覺化預覽 (Heatmap)</h3>
+          <p id="detectionStatus" class="text-xs text-slate-500 mb-2">等待上傳照片。</p>
           <div class="bg-slate-900 rounded-xl border border-slate-700 flex items-center justify-center min-h-[260px] overflow-hidden relative">
-            <p id="placeholderText" class="text-slate-500 text-sm">請先於左側上傳照片並點擊「開始分析」</p>
-            <canvas id="resultCanvas" class="max-w-full max-h-[340px] hidden"></canvas>
+            <p id="placeholderText" class="text-slate-500 text-sm px-4 text-center">請先於左側上傳照片並點擊「開始分析」</p>
+            <canvas id="resultCanvas" class="max-w-full max-h-[420px] hidden"></canvas>
           </div>
         </div>
 
         <div id="reportBox" class="bg-slate-900/80 p-5 rounded-xl border border-slate-700 space-y-3 hidden">
           <h3 id="reportTitle" class="text-lg font-bold text-amber-400"></h3>
           <p id="reportDesc" class="text-sm text-slate-300 leading-relaxed"></p>
+          <p id="angleEvidence" class="text-xs text-sky-300/90 leading-relaxed hidden"></p>
           <div class="pt-2 border-t border-slate-700">
             <h4 class="text-sm font-semibold text-emerald-400 mb-1">🛠️ 選鞋與日常改善建議：</h4>
             <ul id="reportTips" class="list-disc list-inside text-sm text-slate-300 space-y-1"></ul>
           </div>
+          <p class="text-[11px] text-slate-500 pt-2 border-t border-slate-700">本分析僅供參考，不取代醫師或物理治療師的專業診斷。</p>
         </div>
-      </div>
+      </section>
     </div>
   </div>
 
   <script>
     let uploadedImg = null;
+    const photoData = { front: null, side: null, bottom: null }; // 三視角照片 dataURL
+    let angleFindings = { front: null, side: null };            // 正面／側面影像推估結果
+    let autoPoints = [];       // 自動偵測到的熱點 [{x, y, size}]，座標為 0~1
+    let inferredType = 'neutral';
+    let userChangedType = false;
+    let recognition = null;
+    let listening = false;
 
-    document.getElementById('imageInput').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = function(event) {
-        uploadedImg = new Image();
-        uploadedImg.onload = function() {
-          drawBaseImage();
+    const gaitSelect = document.getElementById('gaitSelect');
+    const autoDetect = document.getElementById('autoDetect');
+    const detectionStatus = document.getElementById('detectionStatus');
+    const voiceStatus = document.getElementById('voiceStatus');
+    const voiceTranscript = document.getElementById('voiceTranscript');
+    const voiceBadge = document.getElementById('voiceBadge');
+    const micBtn = document.getElementById('micBtn');
+
+    const gaitLabels = {
+      neutral: '正常／中性步態',
+      medial: '內側磨損',
+      lateral: '外側磨損',
+      forefoot: '前掌過度磨損',
+      asymmetric: '左右不對稱磨損'
+    };
+
+    /* ---------- 圖片載入與繪製 ---------- */
+    function setupPhotoInput(inputId, previewId, key, isPrimary) {
+      const input = document.getElementById(inputId);
+      const preview = document.getElementById(previewId);
+      input.addEventListener('change', function() {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+          alert('請選擇圖片檔案！');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          const src = event.target.result;
+          preview.src = src;
+          preview.classList.remove('hidden');
+          photoData[key] = src;
+          updatePhotoGallery();
+
+          if (!isPrimary) {
+            computeMultiAngleAnalysis();
+            return;
+          }
+          uploadedImg = new Image();
+          uploadedImg.onload = function() {
+            userChangedType = false;
+            drawBaseImage();
+            if (autoDetect.checked) runAutoDetection();
+            else {
+              autoPoints = [];
+              detectionStatus.textContent = '已上傳底面照片，已切換為手動選擇熱點位置。';
+              computeMultiAngleAnalysis();
+            }
+          };
+          uploadedImg.src = src;
         };
-        uploadedImg.src = event.target.result;
-      };
-      reader.readAsDataURL(file);
+        reader.onerror = function() { alert('圖片讀取失敗，請重試。'); };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function updatePhotoGallery() {
+      const gallery = document.getElementById('photoGallery');
+      const map = [
+        ['front', 'galleryFront'],
+        ['side', 'gallerySide'],
+        ['bottom', 'galleryBottom']
+      ];
+      let any = false;
+      map.forEach(([key, id]) => {
+        const img = document.getElementById(id);
+        if (photoData[key]) {
+          img.src = photoData[key];
+          img.closest('figure').classList.remove('hidden');
+          any = true;
+        } else {
+          img.removeAttribute('src');
+          img.closest('figure').classList.add('hidden');
+        }
+      });
+      gallery.classList.toggle('hidden', !any);
+    }
+
+    setupPhotoInput('imageInput', 'bottomPreview', 'bottom', true);
+    setupPhotoInput('frontInput', 'frontPreview', 'front', false);
+    setupPhotoInput('sideInput', 'sidePreview', 'side', false);
+
+    autoDetect.addEventListener('change', function() {
+      if (!uploadedImg) return;
+      if (autoDetect.checked) runAutoDetection();
+      else {
+        autoPoints = [];
+        detectionStatus.textContent = '已切換為手動選擇熱點位置（依右側下拉選單）。';
+      }
+    });
+
+    gaitSelect.addEventListener('change', function() {
+      userChangedType = true;
+      if (autoDetect.checked && autoPoints.length) {
+        detectionStatus.textContent = '已使用自選步態類型，但熱點位置仍來自自動偵測。';
+      }
     });
 
     function drawBaseImage() {
@@ -84,9 +318,13 @@
       const ctx = canvas.getContext('2d');
       document.getElementById('placeholderText').classList.add('hidden');
       canvas.classList.remove('hidden');
-      canvas.width = uploadedImg.width;
-      canvas.height = uploadedImg.height;
-      ctx.drawImage(uploadedImg, 0, 0);
+
+      // 限制顯示尺寸，避免手機照片過大造成效能問題
+      const maxDim = 1200;
+      const scale = Math.min(1, maxDim / Math.max(uploadedImg.width, uploadedImg.height));
+      canvas.width = Math.round(uploadedImg.width * scale);
+      canvas.height = Math.round(uploadedImg.height * scale);
+      ctx.drawImage(uploadedImg, 0, 0, canvas.width, canvas.height);
     }
 
     function drawHeatmapPoint(ctx, x, y, radius, colorInner, colorOuter) {
@@ -100,18 +338,363 @@
       ctx.fill();
     }
 
+    /* ---------- 自動熱點偵測（本機影像紋理分析） ----------
+       概念：鞋底未磨損處有明顯紋路（梯度/變異量大），磨損處表面被磨平，
+       紋理較低且通常較暗。以區塊統計找出低紋理又非背景的區域並聚類。 */
+    function runAutoDetection() {
+      detectionStatus.textContent = '正在分析照片紋理…';
+      // 讓瀏覽器先更新文字再進行計算
+      requestAnimationFrame(() => setTimeout(computeHotspots, 30));
+    }
+
+    function computeHotspots() {
+      if (!uploadedImg) return;
+      const MAX = 360;
+      const scale = Math.min(1, MAX / Math.max(uploadedImg.width, uploadedImg.height));
+      const w = Math.max(1, Math.round(uploadedImg.width * scale));
+      const h = Math.max(1, Math.round(uploadedImg.height * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const cx = c.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(uploadedImg, 0, 0, w, h);
+      const data = cx.getImageData(0, 0, w, h).data;
+
+      const gray = new Float32Array(w * h);
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      }
+
+      // 以邊緣像素估計背景顏色；只有當邊緣夠均勻時才當作背景排除
+      let bgR = 0, bgG = 0, bgB = 0, bgL = 0, bgL2 = 0, bgN = 0;
+      const step = Math.max(1, Math.floor(Math.min(w, h) / 40));
+      function sampleBg(x, y) {
+        const i = (y * w + x) * 4;
+        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        bgR += data[i]; bgG += data[i + 1]; bgB += data[i + 2];
+        bgL += lum; bgL2 += lum * lum; bgN++;
+      }
+      for (let x = 0; x < w; x += step) { sampleBg(x, 0); sampleBg(x, h - 1); }
+      for (let y = 0; y < h; y += step) { sampleBg(0, y); sampleBg(w - 1, y); }
+      bgR /= bgN; bgG /= bgN; bgB /= bgN;
+      const bgStd = Math.sqrt(Math.max(0, bgL2 / bgN - (bgL / bgN) ** 2));
+      const hasUniformBg = bgStd < 18;
+
+      const bs = Math.max(6, Math.round(Math.min(w, h) / 18));
+      const cols = Math.ceil(w / bs), rows = Math.ceil(h / bs);
+      const blocks = [];
+      let texMin = Infinity, texMax = -Infinity;
+
+      for (let by = 0; by < rows; by++) {
+        for (let bx = 0; bx < cols; bx++) {
+          const x0 = bx * bs, y0 = by * bs;
+          const x1 = Math.min(w, x0 + bs), y1 = Math.min(h, y0 + bs);
+          let sum = 0, sum2 = 0, n = 0, gradSum = 0, colorDist = 0;
+          for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++) {
+              const p = y * w + x;
+              const v = gray[p];
+              sum += v; sum2 += v * v; n++;
+              const gx = gray[y * w + Math.min(w - 1, x + 1)] - gray[y * w + Math.max(0, x - 1)];
+              const gy = gray[Math.min(h - 1, y + 1) * w + x] - gray[Math.max(0, y - 1) * w + x];
+              gradSum += Math.abs(gx) + Math.abs(gy);
+              const i = p * 4;
+              colorDist += (Math.abs(data[i] - bgR) + Math.abs(data[i + 1] - bgG) + Math.abs(data[i + 2] - bgB)) / 3;
+            }
+          }
+          const mean = sum / n;
+          const std = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+          const avgGrad = gradSum / n;
+          const avgColorDist = colorDist / n;
+          if ((hasUniformBg && avgColorDist < 18) || mean < 20 || mean > 245) continue; // 背景或極端曝光
+
+          const texture = std * 0.6 + avgGrad * 0.4;
+          texMin = Math.min(texMin, texture);
+          texMax = Math.max(texMax, texture);
+          blocks.push({
+            bx, by,
+            cx: (x0 + x1) / 2 / w,
+            cy: (y0 + y1) / 2 / h,
+            mean, texture
+          });
+        }
+      }
+
+      if (!blocks.length) {
+        autoPoints = [];
+        detectionStatus.textContent = '無法從照片中辨識鞋底區域，請改用手動選擇。';
+        return;
+      }
+
+      const range = texMax - texMin || 1;
+      blocks.forEach(b => {
+        const texN = (b.texture - texMin) / range;
+        const edge = Math.min(b.cx, 1 - b.cx, b.cy, 1 - b.cy);
+        const edgeFactor = Math.min(1, edge / 0.1);
+        b.score = ((1 - texN) * 0.75 + (1 - b.mean / 255) * 0.25) * edgeFactor;
+      });
+
+      const candidates = blocks.filter(b => b.score > 0.55).sort((a, b) => b.score - a.score);
+      const used = new Set();
+      const clusters = [];
+      for (const b of candidates) {
+        if (used.has(b)) continue;
+        const cluster = [b];
+        used.add(b);
+        for (let i = 0; i < cluster.length; i++) {
+          const cur = cluster[i];
+          for (const o of candidates) {
+            if (used.has(o)) continue;
+            const dx = o.bx - cur.bx, dy = o.by - cur.by;
+            if (dx * dx + dy * dy <= 4) { cluster.push(o); used.add(o); }
+          }
+        }
+        if (cluster.length < 2) continue;
+        let sw = 0, sx = 0, sy = 0;
+        cluster.forEach(o => { sw += o.score; sx += o.cx * o.score; sy += o.cy * o.score; });
+        clusters.push({
+          x: sx / sw,
+          y: sy / sw,
+          score: sw / cluster.length,
+          size: 0.09 + Math.min(0.09, cluster.length * 0.006)
+        });
+      }
+      clusters.sort((a, b) => b.score - a.score);
+
+      const picked = [];
+      for (const c of clusters) {
+        if (picked.some(p => Math.hypot(p.x - c.x, p.y - c.y) < 0.18)) continue;
+        picked.push(c);
+        if (picked.length >= 3) break;
+      }
+
+      if (!picked.length) {
+        autoPoints = [];
+        detectionStatus.textContent = '未找到明顯的低紋理磨耗區，請確認照片是否為鞋底，或改用手動選擇。';
+        return;
+      }
+
+      autoPoints = picked;
+      inferredType = inferGait(autoPoints);
+      if (!userChangedType) gaitSelect.value = inferredType;
+      detectionStatus.textContent = `自動偵測到 ${autoPoints.length} 個疑似磨損熱點，推估：${gaitLabels[inferredType]}` +
+        (userChangedType ? '（目前使用你自選的類型）' : '（可手動更改）');
+      drawBaseImage();
+      computeMultiAngleAnalysis();
+    }
+
+    function inferGait(points) {
+      const xs = points.map(p => p.x), ys = points.map(p => p.y);
+      const spreadX = Math.max(...xs) - Math.min(...xs);
+      const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
+      if (points.length >= 2 && spreadX > 0.28) return 'asymmetric';
+      if (avgX > 0.56 && avgY < 0.62) return 'medial';
+      if (avgX < 0.44 && avgY < 0.62) return 'lateral';
+      if (avgY < 0.42) return 'forefoot';
+      return 'neutral';
+    }
+
+    /* ---------- 正面／側面多角度分析 ---------- */
+    function loadImage(src, cb) {
+      const img = new Image();
+      img.onload = () => cb(img);
+      img.onerror = () => cb(null);
+      img.src = src;
+    }
+
+    function extractMask(img) {
+      const MAX = 300;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      const data = ctx.getImageData(0, 0, w, h).data;
+      const gray = new Float32Array(w * h);
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      }
+
+      let bgR = 0, bgG = 0, bgB = 0, bgL = 0, bgL2 = 0, bgN = 0;
+      const step = Math.max(1, Math.floor(Math.min(w, h) / 30));
+      function sample(x, y) {
+        const i = (y * w + x) * 4;
+        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        bgR += data[i]; bgG += data[i + 1]; bgB += data[i + 2];
+        bgL += lum; bgL2 += lum * lum; bgN++;
+      }
+      for (let x = 0; x < w; x += step) { sample(x, 0); sample(x, h - 1); }
+      for (let y = 0; y < h; y += step) { sample(0, y); sample(w - 1, y); }
+      bgR /= bgN; bgG /= bgN; bgB /= bgN;
+      const bgStd = Math.sqrt(Math.max(0, bgL2 / bgN - (bgL / bgN) ** 2));
+      const uniformBg = bgStd < 20;
+
+      const mask = new Uint8Array(w * h);
+      for (let p = 0; p < w * h; p++) {
+        const lum = gray[p];
+        if (lum < 18 || lum > 248) continue;
+        if (uniformBg) {
+          const i = p * 4;
+          const dist = (Math.abs(data[i] - bgR) + Math.abs(data[i + 1] - bgG) + Math.abs(data[i + 2] - bgB)) / 3;
+          if (dist < 20) continue;
+        }
+        mask[p] = 1;
+      }
+      return { w, h, mask };
+    }
+
+    function median(values) {
+      if (!values.length) return -1;
+      const a = values.slice().sort((x, y) => x - y);
+      const m = Math.floor(a.length / 2);
+      return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+    }
+
+    // 側面：由鞋子下緣輪廓估算中足離地高度，判斷足弓類型
+    function analyzeSideImage(src, done) {
+      loadImage(src, img => {
+        if (!img) return done(null);
+        const { w, h, mask } = extractMask(img);
+        const bins = 48;
+        const profile = new Array(bins).fill(-1);
+        for (let b = 0; b < bins; b++) {
+          const x0 = Math.floor(b * w / bins);
+          const x1 = Math.max(x0 + 1, Math.floor((b + 1) * w / bins));
+          const need = Math.max(1, Math.floor((x1 - x0) * 0.12));
+          for (let y = h - 1; y >= 0; y--) {
+            let count = 0;
+            for (let x = x0; x < x1; x++) if (mask[y * w + x]) count++;
+            if (count >= need) { profile[b] = y; break; }
+          }
+        }
+        const valid = profile.filter(v => v >= 0);
+        if (valid.length < bins * 0.7) return done(null);
+        const fillValue = median(valid);
+        for (let b = 0; b < bins; b++) if (profile[b] < 0) profile[b] = fillValue;
+        const smooth = profile.map((v, i) =>
+          (profile[Math.max(0, i - 1)] + v + profile[Math.min(bins - 1, i + 1)]) / 3
+        );
+        const left = median(smooth.slice(7, 15));
+        const right = median(smooth.slice(33, 41));
+        const mid = median(smooth.slice(21, 27));
+        const lift = ((left + right) / 2 - mid) / h;
+
+        let key = 'normal', label = '足弓高度正常';
+        if (lift > 0.055) { key = 'high'; label = '疑似高足弓（中足明顯懸空）'; }
+        else if (lift < 0.018) { key = 'flat'; label = '疑似低足弓／扁平足'; }
+        done({
+          key, label,
+          detail: `足弓抬起量約 ${(lift * 100).toFixed(1)}% 圖高`,
+          confidence: Math.min(0.95, 0.55 + Math.abs(lift) * 4)
+        });
+      });
+    }
+
+    // 正面：比較上半部（腳踝）與下半部（前掌）的中線與寬度
+    function analyzeFrontImage(src, done) {
+      loadImage(src, img => {
+        if (!img) return done(null);
+        const { w, h, mask } = extractMask(img);
+        function stats(y0, y1) {
+          let n = 0, sx = 0, minX = w, maxX = 0;
+          for (let y = Math.floor(y0 * h); y < Math.floor(y1 * h); y++) {
+            for (let x = 0; x < w; x++) {
+              if (mask[y * w + x]) {
+                n++; sx += x;
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+              }
+            }
+          }
+          return n > 20 ? { cx: sx / n / w, width: (maxX - minX) / w } : null;
+        }
+        const upper = stats(0.25, 0.45);
+        const lower = stats(0.60, 0.85);
+        if (!upper || !lower) return done(null);
+        const deviation = Math.abs(lower.cx - upper.cx);
+        const widthRatio = lower.width / Math.max(0.01, upper.width);
+        let key = 'normal', label = '前掌輪廓大致對稱';
+        if (deviation > 0.05 || widthRatio > 1.7) {
+          key = 'hallux';
+          label = '疑似拇指外翻／前掌不對稱';
+        }
+        done({
+          key, label,
+          detail: `中線偏移 ${(deviation * 100).toFixed(1)}%，前掌/後足寬比 ${widthRatio.toFixed(2)}`
+        });
+      });
+    }
+
+    function computeMultiAngleAnalysis() {
+      const box = document.getElementById('angleBox');
+      if (!photoData.front && !photoData.side) {
+        box.classList.add('hidden');
+        angleFindings = { front: null, side: null };
+        return;
+      }
+      box.classList.remove('hidden');
+      angleFindings = { front: null, side: null };
+      let pending = 0;
+      const finish = () => { if (--pending === 0) renderAngleFindings(); };
+      if (photoData.front) {
+        pending++;
+        analyzeFrontImage(photoData.front, r => { angleFindings.front = r; finish(); });
+      }
+      if (photoData.side) {
+        pending++;
+        analyzeSideImage(photoData.side, r => { angleFindings.side = r; finish(); });
+      }
+    }
+
+    function fuseFindings() {
+      const scores = { neutral: 0, medial: 0, lateral: 0, forefoot: 0, asymmetric: 0 };
+      if (autoDetect.checked && autoPoints.length && inferredType) scores[inferredType] += 2;
+      if (angleFindings.side) {
+        if (angleFindings.side.key === 'flat') scores.medial += 2;
+        if (angleFindings.side.key === 'high') scores.lateral += 2;
+      }
+      if (angleFindings.front && angleFindings.front.key === 'hallux') {
+        scores.forefoot += 1.5;
+        scores.asymmetric += 1;
+      }
+      let best = 'neutral', bestScore = -1;
+      Object.keys(scores).forEach(k => {
+        if (scores[k] > bestScore) { best = k; bestScore = scores[k]; }
+      });
+      return { type: best, score: bestScore };
+    }
+
+    function renderAngleFindings() {
+      document.getElementById('angleFront').textContent = angleFindings.front
+        ? `正面：${angleFindings.front.label}（${angleFindings.front.detail}）`
+        : (photoData.front ? '正面：無法辨識輪廓，請換張照片' : '正面：尚未上傳');
+      document.getElementById('angleSide').textContent = angleFindings.side
+        ? `側面：${angleFindings.side.label}（${angleFindings.side.detail}）`
+        : (photoData.side ? '側面：無法辨識輪廓，請換張照片' : '側面：尚未上傳');
+
+      const fused = fuseFindings();
+      const summary = `綜合推估：${gaitLabels[fused.type]}`;
+      document.getElementById('angleConclusion').textContent = summary;
+      if (!userChangedType && fused.score > 0) {
+        gaitSelect.value = fused.type;
+        detectionStatus.textContent = `${summary}（已合併底面熱點與多角度特徵，可手動更改）`;
+      }
+    }
+
+    /* ---------- 分析與報告 ---------- */
     function analyzeWear() {
       if (!uploadedImg) {
-        alert('請先選擇一張鞋底照片！');
+        alert('請先上傳「底面」照片，熱點分析需要鞋底影像！');
         return;
       }
       drawBaseImage();
       const canvas = document.getElementById('resultCanvas');
       const ctx = canvas.getContext('2d');
-      const w = canvas.width;
-      const h = canvas.height;
+      const w = canvas.width, h = canvas.height;
       const r = Math.min(w, h) * 0.16;
-      const type = document.getElementById('gaitSelect').value;
+      const type = gaitSelect.value;
 
       const data = {
         neutral: {
@@ -147,7 +730,13 @@
       };
 
       const selected = data[type];
-      selected.points.forEach(p => drawHeatmapPoint(ctx, w * p[0], h * p[1], r, p[2], p[3]));
+      if (autoDetect.checked && autoPoints.length) {
+        const inner = type === 'neutral' ? 'rgba(16,185,129,0.85)' : 'rgba(239,68,68,0.85)';
+        const outer = type === 'neutral' ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.3)';
+        autoPoints.forEach(p => drawHeatmapPoint(ctx, w * p.x, h * p.y, Math.min(w, h) * p.size, inner, outer));
+      } else {
+        selected.points.forEach(p => drawHeatmapPoint(ctx, w * p[0], h * p[1], r, p[2], p[3]));
+      }
 
       document.getElementById('reportBox').classList.remove('hidden');
       document.getElementById('reportTitle').textContent = selected.title;
@@ -159,7 +748,146 @@
         li.textContent = tip;
         tipsList.appendChild(li);
       });
+
+      const evidence = [];
+      if (angleFindings.side) evidence.push('側面：' + angleFindings.side.label);
+      if (angleFindings.front) evidence.push('正面：' + angleFindings.front.label);
+      const angleEvidence = document.getElementById('angleEvidence');
+      angleEvidence.textContent = evidence.length ? '多角度佐證：' + evidence.join('；') : '';
+      angleEvidence.classList.toggle('hidden', !evidence.length);
     }
+
+    /* ---------- 語音功能 ---------- */
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    function initVoice() {
+      if (!SpeechRecognitionAPI) {
+        micBtn.disabled = true;
+        micBtn.textContent = '此瀏覽器不支援語音';
+        voiceBadge.textContent = '不支援';
+        voiceStatus.textContent = '語音辨識僅支援 Chrome / Edge 等瀏覽器，仍可手動操作與朗讀。';
+        return;
+      }
+      recognition = new SpeechRecognitionAPI();
+      recognition.lang = 'zh-TW';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        listening = true;
+        micBtn.textContent = '⏹ 停止聆聽';
+        voiceBadge.textContent = '聆聽中';
+        voiceBadge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300';
+        voiceStatus.textContent = '請說出指令…';
+      };
+      recognition.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        handleVoiceCommand(text);
+      };
+      recognition.onerror = (e) => {
+        const msg = {
+          'not-allowed': '麥克風權限被拒絕，請在網址列允許麥克風。',
+          'no-speech': '沒有偵測到語音，請再試一次。',
+          'network': '語音辨識需要網路連線，請檢查網路。'
+        };
+        voiceStatus.textContent = msg[e.error] || ('語音辨識錯誤：' + e.error);
+      };
+      recognition.onend = () => {
+        listening = false;
+        micBtn.textContent = '🎤 點擊說話';
+        voiceBadge.textContent = '就緒';
+        voiceBadge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-400';
+      };
+    }
+
+    function toggleListen() {
+      if (!recognition) return;
+      if (listening) {
+        recognition.stop();
+        return;
+      }
+      try {
+        recognition.start();
+      } catch (err) {
+        voiceStatus.textContent = '無法啟動麥克風：' + err.message;
+      }
+    }
+
+    function handleVoiceCommand(text) {
+      voiceTranscript.textContent = '你說：「' + text + '」';
+      const t = text.replace(/\s/g, '');
+      let matched = false;
+
+      if (/停止|取消|關閉/.test(t)) {
+        stopSpeaking();
+        if (listening) recognition.stop();
+        voiceStatus.textContent = '已停止。';
+        return;
+      }
+      if (/朗讀|唸|念結果|說結果/.test(t)) {
+        speakReport();
+        matched = true;
+      }
+      if (/分析|開始/.test(t)) {
+        analyzeWear();
+        voiceStatus.textContent = '已開始分析。';
+        matched = true;
+      }
+
+      const rules = [
+        { re: /內側|扁平足|內八/, val: 'medial' },
+        { re: /外側|高足弓|外八/, val: 'lateral' },
+        { re: /前掌|跑跳|阿基里斯|踮腳/, val: 'forefoot' },
+        { re: /不對稱|左右|骨盆|長短腳/, val: 'asymmetric' },
+        { re: /正常|中性/, val: 'neutral' }
+      ];
+      for (const rule of rules) {
+        if (rule.re.test(t)) {
+          gaitSelect.value = rule.val;
+          userChangedType = true;
+          voiceStatus.textContent = '已切換為「' + gaitLabels[rule.val] + '」，可接著說「開始分析」。';
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        voiceStatus.textContent = '未辨識到指令。可以試試「內側磨損」、「開始分析」或「朗讀結果」。';
+      }
+    }
+
+    function speakReport() {
+      if (!('speechSynthesis' in window)) {
+        voiceStatus.textContent = '此瀏覽器不支援語音朗讀。';
+        return;
+      }
+      const title = document.getElementById('reportTitle').textContent;
+      if (!title) {
+        voiceStatus.textContent = '請先完成分析，再一次朗讀結果。';
+        return;
+      }
+      const desc = document.getElementById('reportDesc').textContent;
+      const tips = Array.from(document.getElementById('reportTips').children).map(li => li.textContent);
+      const text = [title, desc, '改善建議：' + tips.join('。')]
+        .join('\n').replace(/[🎯🛠️👟🤗]/g, '').replace(/\*\*/g, '');
+
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'zh-TW';
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onstart = () => { voiceStatus.textContent = '正在朗讀分析結果…'; };
+      utterance.onend = () => { voiceStatus.textContent = '朗讀完成。'; };
+      utterance.onerror = () => { voiceStatus.textContent = '朗讀失敗。'; };
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function stopSpeaking() {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      voiceStatus.textContent = '已停止朗讀。';
+    }
+
+    initVoice();
   </script>
 </body>
 </html>
