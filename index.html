@@ -1,19 +1,165 @@
-<!doctype html>
-<html>
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width" />
-		<title>My static Space</title>
-		<link rel="stylesheet" href="style.css" />
-	</head>
-	<body>
-		<div class="card">
-			<h1>Welcome to your static Space!</h1>
-			<p>You can modify this app directly by editing <i>index.html</i> in the Files and versions tab.</p>
-			<p>
-				Also don't forget to check the
-				<a href="https://huggingface.co/docs/hub/spaces" target="_blank">Spaces documentation</a>.
-			</p>
-		</div>
-	</body>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 步態分析 & 鞋底磨損檢測</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
+  <div class="max-w-5xl mx-auto">
+    <!-- 標題區 -->
+    <header class="text-center mb-8">
+      <h1 class="text-3xl md:text-4xl font-bold text-sky-400 mb-2">👟 AI 步態分析 & 鞋底磨損檢測</h1>
+      <p class="text-slate-400">上傳舊鞋底照片，透過磨耗力學標記熱點並評估足部與關節受力狀況</p>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+      <!-- 左側控制面板 -->
+      <div class="md:col-span-5 bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg flex flex-col justify-between">
+        <div class="space-y-5">
+          <div>
+            <label class="block text-sm font-medium text-sky-300 mb-2">1. 上傳鞋底照片</label>
+            <input type="file" id="imageInput" accept="image/*" class="block w-full text-sm text-slate-300 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-sky-500 file:text-white hover:file:bg-sky-600 cursor-pointer bg-slate-900 rounded-lg border border-slate-600"/>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-sky-300 mb-2">2. 觀察並選擇主要磨損位置</label>
+            <select id="gaitSelect" class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-slate-100 focus:outline-none focus:border-sky-400">
+              <option value="neutral">正常/中性步態（後跟外側＋前掌大拇趾微磨）</option>
+              <option value="medial">內側磨損（疑似扁平足 / 內八步態）</option>
+              <option value="lateral">外側磨損（疑似高足弓 / 外八步態）</option>
+              <option value="forefoot">前掌過度磨損（頻繁跑跳 / 阿基里斯腱緊繃）</option>
+              <option value="asymmetric">左右不對稱磨損（重心傾斜 / 骨盆歪斜）</option>
+            </select>
+          </div>
+        </div>
+
+        <button onclick="analyzeWear()" class="mt-6 w-full bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold py-3 px-4 rounded-xl shadow-md transition">
+          開始步態與熱點分析
+        </button>
+      </div>
+
+      <!-- 右側結果顯示區 -->
+      <div class="md:col-span-7 bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg space-y-6">
+        <div>
+          <h2 class="text-sm font-medium text-sky-300 mb-2">磨損熱點視覺化預覽 (Heatmap)</h2>
+          <div class="bg-slate-900 rounded-xl border border-slate-700 flex items-center justify-center min-h-[260px] overflow-hidden relative">
+            <p id="placeholderText" class="text-slate-500 text-sm">請先於左側上傳照片並點擊「開始分析」</p>
+            <canvas id="resultCanvas" class="max-w-full max-h-[340px] hidden"></canvas>
+          </div>
+        </div>
+
+        <div id="reportBox" class="bg-slate-900/80 p-5 rounded-xl border border-slate-700 space-y-3 hidden">
+          <h3 id="reportTitle" class="text-lg font-bold text-amber-400"></h3>
+          <p id="reportDesc" class="text-sm text-slate-300 leading-relaxed"></p>
+          <div class="pt-2 border-t border-slate-700">
+            <h4 class="text-sm font-semibold text-emerald-400 mb-1">🛠️ 選鞋與日常改善建議：</h4>
+            <ul id="reportTips" class="list-disc list-inside text-sm text-slate-300 space-y-1"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let uploadedImg = null;
+
+    document.getElementById('imageInput').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        uploadedImg = new Image();
+        uploadedImg.onload = function() {
+          drawBaseImage();
+        };
+        uploadedImg.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function drawBaseImage() {
+      const canvas = document.getElementById('resultCanvas');
+      const ctx = canvas.getContext('2d');
+      document.getElementById('placeholderText').classList.add('hidden');
+      canvas.classList.remove('hidden');
+      canvas.width = uploadedImg.width;
+      canvas.height = uploadedImg.height;
+      ctx.drawImage(uploadedImg, 0, 0);
+    }
+
+    function drawHeatmapPoint(ctx, x, y, radius, colorInner, colorOuter) {
+      const grad = ctx.createRadialGradient(x, y, radius * 0.1, x, y, radius);
+      grad.addColorStop(0, colorInner);
+      grad.addColorStop(0.5, colorOuter);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function analyzeWear() {
+      if (!uploadedImg) {
+        alert('請先選擇一張鞋底照片！');
+        return;
+      }
+      drawBaseImage();
+      const canvas = document.getElementById('resultCanvas');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const r = Math.min(w, h) * 0.16;
+      const type = document.getElementById('gaitSelect').value;
+
+      const data = {
+        neutral: {
+          title: '🎯 檢測結果：正常 / 中性步態 (Neutral)',
+          desc: '磨損集中於「後跟外側」至「前掌大拇趾方向」，代表足底滾動順暢、壓力分佈均勻，下肢關節處於理想受力狀態。',
+          tips: ['適合大多數「一般中性款（Neutral）」運動鞋。', '維持現有走路姿勢，鞋底紋路磨平時定期更換即可。'],
+          points: [[0.3, 0.8, 'rgba(16,185,129,0.8)', 'rgba(16,185,129,0.2)'], [0.6, 0.25, 'rgba(16,185,129,0.7)', 'rgba(16,185,129,0.2)']]
+        },
+        medial: {
+          title: '🎯 檢測結果：內側磨損（疑似扁平足 / 內八步態）',
+          desc: '足底內側承受過多重心壓力，常見於足弓塌陷或內八習慣。長期容易引起小腿內側疲勞、膝關節內側壓力過大或拇指外翻。',
+          tips: ['建議挑選具足弓支撐的「穩定型（Stability）」鞋款，避免鞋底過軟。', '可搭配內側足弓支撐鞋墊，日常多練習「腳趾抓毛巾」訓練足底肌群。'],
+          points: [[0.65, 0.3, 'rgba(239,68,68,0.85)', 'rgba(245,158,11,0.3)'], [0.6, 0.55, 'rgba(239,68,68,0.8)', 'rgba(245,158,11,0.3)']]
+        },
+        lateral: {
+          title: '🎯 檢測結果：外側磨損（疑似高足弓 / 外八步態）',
+          desc: '壓力集中於足底外側，吸震緩衝能力較弱，震動易傳導至膝蓋與髖關節，並可能造成小腿外側緊繃或踝關節慣性扭傷。',
+          tips: ['選擇「高緩震型（Cushioned）」鞋款，加強落地時的衝擊吸收。', '日常多伸展小腿與大腿外側（髂脛束），減少外側張力。'],
+          points: [[0.3, 0.78, 'rgba(239,68,68,0.85)', 'rgba(245,158,11,0.3)'], [0.35, 0.3, 'rgba(239,68,68,0.8)', 'rgba(245,158,11,0.3)']]
+        },
+        forefoot: {
+          title: '🎯 檢測結果：前掌過度磨損（頻繁跑跳 / 阿基里斯腱緊繃）',
+          desc: '前腳掌蹠骨區域過早或過度推蹬，常見於運動族群或小腿後側肌群緊繃者，容易引發前掌疼痛或足底筋膜炎。',
+          tips: ['選用前掌緩震厚度充足、鞋頭寬鬆不壓迫腳趾的鞋款。', '多做推牆小腿伸展與足底筋膜放鬆運動。'],
+          points: [[0.5, 0.25, 'rgba(239,68,68,0.9)', 'rgba(245,158,11,0.35)']]
+        },
+        asymmetric: {
+          title: '🎯 檢測結果：左右不對稱磨損（重心傾斜 / 骨盆歪斜）',
+          desc: '雙腳磨損程度或位置明顯不同，顯示身體重心左右失衡，可能與站姿三七步、骨盆歪斜、長短腳或舊傷代償有關。',
+          tips: ['建議諮詢物理治療師或復健科進行完整足壓與體態評估。', '留意日常站姿與坐姿對稱性，加強核心肌群穩定度。'],
+          points: [[0.28, 0.75, 'rgba(239,68,68,0.9)', 'rgba(245,158,11,0.35)']]
+        }
+      };
+
+      const selected = data[type];
+      selected.points.forEach(p => drawHeatmapPoint(ctx, w * p[0], h * p[1], r, p[2], p[3]));
+
+      document.getElementById('reportBox').classList.remove('hidden');
+      document.getElementById('reportTitle').textContent = selected.title;
+      document.getElementById('reportDesc').textContent = selected.desc;
+      const tipsList = document.getElementById('reportTips');
+      tipsList.innerHTML = '';
+      selected.tips.forEach(tip => {
+        const li = document.createElement('li');
+        li.textContent = tip;
+        tipsList.appendChild(li);
+      });
+    }
+  </script>
+</body>
 </html>
