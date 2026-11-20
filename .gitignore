@@ -1,1 +1,4 @@
 push-to-hf.ps1
+push-to-hf-login.ps1
+push-to-hf.bat
+push-to-hf-console.ps1
